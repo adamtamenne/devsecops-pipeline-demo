@@ -129,7 +129,7 @@ jobs:
         # In production, CRITICAL/HIGH CVEs in the container image should
         # block deployment (set to false and keep exit-code: "1").
         continue-on-error: true
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@master
         with:
           image-ref: devsecops-demo:${{ github.sha }}
           format: sarif
