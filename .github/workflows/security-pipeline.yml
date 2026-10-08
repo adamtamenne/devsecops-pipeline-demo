@@ -85,20 +85,23 @@ jobs:
       - name: Install dependencies
         run: pip install -r app/requirements.txt
 
+      - name: Install Snyk CLI
+        run: npm install -g snyk
+
       - name: Run Snyk to check for vulnerabilities
         # continue-on-error: true lets the pipeline proceed even when Snyk
         # finds HIGH/CRITICAL CVEs (which it will, because the demo app
         # pins vulnerable versions on purpose). In production, set this to
         # false so known-vulnerable dependencies block deployment.
         continue-on-error: true
-        uses: snyk/actions/python@master
+        run: |
+          snyk auth $SNYK_TOKEN
+          snyk test \
+            --file=app/requirements.txt \
+            --severity-threshold=high \
+            --sarif-file-output=snyk-results.sarif
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
-        with:
-          args: >-
-            --file=app/requirements.txt
-            --severity-threshold=high
-            --sarif-file-output=snyk-results.sarif
 
       - name: Upload SARIF to GitHub Security
         uses: github/codeql-action/upload-sarif@v3
