@@ -1,0 +1,34 @@
+# ZAP Baseline Scan Configuration
+# Rules reference: https://www.zaproxy.org/docs/alerts/
+#
+# WARN  = report the finding but do not fail the build
+# FAIL  = report the finding and fail the build
+# IGNORE = suppress the finding entirely (with justification)
+
+10038:
+  action: "FAIL"
+  name: "Content Security Policy (CSP) Header Not Set"
+
+10021:
+  action: "FAIL"
+  name: "X-Content-Type-Options Header Missing"
+
+10036:
+  action: "WARN"
+  name: "Server Leaks Version Information via Server HTTP Response Header"
+
+10035:
+  action: "FAIL"
+  name: "Strict-Transport-Security Header Not Set"
+
+40012:
+  action: "FAIL"
+  name: "Cross Site Scripting (Reflected)"
+
+40018:
+  action: "FAIL"
+  name: "SQL Injection"
+
+10010:
+  action: "WARN"
+  name: "Cookie No HttpOnly Flag"

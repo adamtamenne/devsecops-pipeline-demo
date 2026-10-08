@@ -1,0 +1,12 @@
+# Core
+Flask==2.3.2
+Werkzeug==2.3.6
+
+# Intentionally pinned to versions with known CVEs for SCA demonstration
+# CVE-2024-34069: Werkzeug debugger RCE (fixed in 3.0.3)
+# CVE-2023-30861: Flask session cookie vulnerability (fixed in 2.3.3)
+Jinja2==3.1.2
+requests==2.28.0
+# CVE-2023-32681: requests unintended leak of Proxy-Authorization header
+cryptography==41.0.0
+# CVE-2023-49083: cryptography NULL pointer dereference

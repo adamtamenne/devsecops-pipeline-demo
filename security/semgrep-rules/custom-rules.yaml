@@ -1,0 +1,49 @@
+rules:
+  - id: hardcoded-api-key
+    patterns:
+      - pattern: $VAR = "sk_live_..."
+    message: >
+      Hardcoded production API key detected. Secrets should be loaded
+      from environment variables or a secrets manager, never committed
+      to source code.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      cwe:
+        - CWE-798  # Use of Hard-coded Credentials
+      owasp:
+        - A07:2021  # Identification and Authentication Failures
+      confidence: HIGH
+
+  - id: sql-string-concat
+    patterns:
+      - pattern: |
+          $QUERY = "..." + $VAR + "..."
+          ...
+          $DB.execute($QUERY)
+    message: >
+      SQL query constructed via string concatenation with user input.
+      Use parameterized queries to prevent SQL injection.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      cwe:
+        - CWE-89  # SQL Injection
+      owasp:
+        - A03:2021  # Injection
+      confidence: HIGH
+
+  - id: flask-debug-enabled
+    patterns:
+      - pattern: app.run(..., debug=True, ...)
+    message: >
+      Flask debug mode is enabled. The Werkzeug debugger allows
+      arbitrary code execution and must never be used in production.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      cwe:
+        - CWE-489  # Active Debug Code
+      owasp:
+        - A05:2021  # Security Misconfiguration
+      confidence: HIGH

@@ -1,0 +1,165 @@
+name: DevSecOps Security Pipeline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  security-events: write  # Required for SARIF upload to GitHub Security tab
+
+jobs:
+  # ============================================================
+  # Stage 1: Secrets Scanning
+  # WHY FIRST: A leaked secret is already exposed the moment it
+  # hits the repo. Nothing else matters until this passes.
+  # ============================================================
+  secrets-scan:
+    name: "Stage 1: Secrets (Gitleaks)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history so Gitleaks can scan all commits
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+
+  # ============================================================
+  # Stage 2: SAST (Static Application Security Testing)
+  # WHY HERE: Catch code-level vulnerabilities before the app is
+  # built or packaged. Cheaper to fix at this stage.
+  # ============================================================
+  sast-scan:
+    name: "Stage 2: SAST (Semgrep)"
+    runs-on: ubuntu-latest
+    needs: secrets-scan
+    container:
+      image: semgrep/semgrep
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Semgrep
+        run: |
+          semgrep ci \
+            --config auto \
+            --config ./security/semgrep-rules/ \
+            --sarif --output semgrep-results.sarif \
+            --severity ERROR \
+            --error
+        env:
+          SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
+
+      - name: Upload SARIF to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: semgrep-results.sarif
+
+  # ============================================================
+  # Stage 3: SCA (Software Composition Analysis)
+  # WHY HERE: Before building the image, verify that the
+  # dependencies themselves are not introducing known CVEs.
+  # ============================================================
+  sca-scan:
+    name: "Stage 3: SCA (Snyk)"
+    runs-on: ubuntu-latest
+    needs: secrets-scan
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r app/requirements.txt
+
+      - name: Run Snyk to check for vulnerabilities
+        uses: snyk/actions/python-3.10@master
+        continue-on-error: false  # Quality gate: fail on vulnerabilities
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          args: >-
+            --file=app/requirements.txt
+            --severity-threshold=high
+            --sarif-file-output=snyk-results.sarif
+
+      - name: Upload SARIF to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: snyk-results.sarif
+
+  # ============================================================
+  # Stage 4: Container Image Scanning
+  # WHY HERE: The base image and installed packages can introduce
+  # vulnerabilities even if the app code and deps are clean.
+  # ============================================================
+  container-scan:
+    name: "Stage 4: Container Scan (Trivy)"
+    runs-on: ubuntu-latest
+    needs: [sast-scan, sca-scan]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t devsecops-demo:${{ github.sha }} ./app
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: devsecops-demo:${{ github.sha }}
+          format: sarif
+          output: trivy-results.sarif
+          severity: CRITICAL,HIGH
+          exit-code: "1"  # Quality gate: fail on critical/high
+
+      - name: Upload SARIF to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-results.sarif
+
+  # ============================================================
+  # Stage 5: DAST (Dynamic Application Security Testing)
+  # WHY LAST: DAST needs a running application to test against.
+  # It catches runtime issues that static analysis misses:
+  # actual XSS rendering, real SQL injection responses, missing
+  # security headers in HTTP responses.
+  # ============================================================
+  dast-scan:
+    name: "Stage 5: DAST (OWASP ZAP)"
+    runs-on: ubuntu-latest
+    needs: container-scan
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build and start the application
+        run: |
+          docker build -t devsecops-demo:${{ github.sha }} ./app
+          docker run -d -p 5000:5000 --name demo-app devsecops-demo:${{ github.sha }}
+          # Wait for the app to be ready
+          for i in $(seq 1 30); do
+            curl -s http://localhost:5000/health && break
+            sleep 1
+          done
+
+      - name: Run OWASP ZAP baseline scan
+        uses: zaproxy/action-baseline@v0.14.0
+        with:
+          target: "http://localhost:5000"
+          rules_file_name: "security/zap-config.yaml"
+          cmd_options: "-a"
+          allow_issue_writing: false
+
+      - name: Stop application
+        if: always()
+        run: docker stop demo-app && docker rm demo-app
