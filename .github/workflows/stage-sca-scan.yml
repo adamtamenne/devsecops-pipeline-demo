@@ -1,0 +1,59 @@
+name: SCA Scan
+
+on:
+  workflow_call:
+    inputs:
+      python-version:
+        description: "Python version for dependency installation"
+        required: false
+        default: "3.11"
+        type: string
+      requirements-file:
+        description: "Path to requirements.txt"
+        required: false
+        default: "app/requirements.txt"
+        type: string
+      severity-threshold:
+        description: "Minimum severity to flag"
+        required: false
+        default: "high"
+        type: string
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  snyk:
+    name: Snyk
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python-version }}
+
+      - name: Install dependencies
+        run: pip install -r ${{ inputs.requirements-file }}
+
+      - name: Install Snyk CLI
+        run: npm install -g snyk
+
+      - name: Run Snyk to check for vulnerabilities
+        continue-on-error: true
+        run: |
+          snyk auth $SNYK_TOKEN
+          snyk test \
+            --file=${{ inputs.requirements-file }} \
+            --severity-threshold=${{ inputs.severity-threshold }} \
+            --sarif-file-output=snyk-results.sarif
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+
+      - name: Upload SARIF to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: snyk-results.sarif

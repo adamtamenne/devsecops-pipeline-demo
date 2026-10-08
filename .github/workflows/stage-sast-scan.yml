@@ -1,0 +1,46 @@
+name: SAST Scan
+
+on:
+  workflow_call:
+    inputs:
+      semgrep-config:
+        description: "Additional Semgrep rule config path"
+        required: false
+        default: "./security/semgrep-rules/"
+        type: string
+      severity:
+        description: "Minimum severity to report"
+        required: false
+        default: "ERROR"
+        type: string
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  semgrep:
+    name: Semgrep
+    runs-on: ubuntu-latest
+    container:
+      image: semgrep/semgrep
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Semgrep
+        continue-on-error: true
+        run: |
+          semgrep scan \
+            --config auto \
+            --config ${{ inputs.semgrep-config }} \
+            --sarif --output semgrep-results.sarif \
+            --severity ${{ inputs.severity }} \
+            --error
+        env:
+          SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
+
+      - name: Upload SARIF to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: semgrep-results.sarif
