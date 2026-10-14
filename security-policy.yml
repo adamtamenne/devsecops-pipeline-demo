@@ -1,0 +1,122 @@
+# =============================================================================
+# Security Policy Gates Configuration
+# =============================================================================
+#
+# ROLLOUT STRATEGY (for consulting engagements):
+#
+# Turning all gates to "blocking" on day one breaks developer trust and
+# generates noise that teams learn to ignore. A phased rollout builds
+# confidence in the tooling and gives developers time to adopt secure
+# coding practices before enforcement begins.
+#
+#   Phase 1 - OBSERVE (Weeks 1-2):
+#     All gates run but nothing blocks. Teams see findings in PR comments
+#     and pipeline summaries. Goal: establish baseline, identify noisy rules,
+#     tune false positives before anyone is blocked by them.
+#
+#   Phase 2 - GATE CRITICAL (Weeks 3-6):
+#     Only critical/high findings block the pipeline. Medium and below are
+#     warnings. Goal: catch the most dangerous issues (RCE, SQLi, known
+#     exploited CVEs) while keeping developer velocity intact.
+#
+#   Phase 3 - ENFORCE (Week 7+):
+#     Medium findings now block. Low remains informational. Custom rules
+#     and org-specific policies are active. Goal: full shift-left with
+#     tuned, trusted tooling that developers see as helpful, not punitive.
+#
+# Set the active phase below. Each scanner inherits the phase's thresholds
+# unless overridden at the scanner level.
+# =============================================================================
+
+active_phase: "phase_2"
+
+phases:
+  phase_1:
+    description: "Observe — all scanners report, nothing blocks"
+    sast:
+      block_on: []
+      warn_on: ["critical", "high", "medium"]
+      exit_code: 0
+    sca:
+      block_on: []
+      warn_on: ["critical", "high"]
+      fail_on_fix_available: false
+      exit_code: 0
+    secrets:
+      block_on: []
+      warn_on: ["all"]
+      exit_code: 0
+    container:
+      block_on: []
+      warn_on: ["critical", "high"]
+      exit_code: 0
+    dast:
+      block_on: []
+      warn_on: ["high", "medium"]
+      exit_code: 0
+
+  phase_2:
+    description: "Gate critical — block on critical/high, warn on medium"
+    sast:
+      block_on: ["critical", "high"]
+      warn_on: ["medium"]
+      exit_code: 1
+    sca:
+      block_on: ["critical"]
+      warn_on: ["high", "medium"]
+      fail_on_fix_available: true
+      exit_code: 1
+    secrets:
+      block_on: ["all"]
+      warn_on: []
+      exit_code: 1
+    container:
+      block_on: ["critical"]
+      warn_on: ["high", "medium"]
+      exit_code: 1
+    dast:
+      block_on: ["high"]
+      warn_on: ["medium", "low"]
+      exit_code: 1
+      # NOTE: If using a proof-based DAST scanner (e.g., Invicti), high
+      # confidence findings can block earlier because false positive rates
+      # are significantly lower than traditional DAST tools.
+
+  phase_3:
+    description: "Enforce — block on medium+, low is informational"
+    sast:
+      block_on: ["critical", "high", "medium"]
+      warn_on: ["low"]
+      exit_code: 1
+      custom_rules: true
+    sca:
+      block_on: ["critical", "high"]
+      warn_on: ["medium"]
+      fail_on_fix_available: true
+      max_age_days: 30
+      exit_code: 1
+    secrets:
+      block_on: ["all"]
+      warn_on: []
+      exit_code: 1
+    container:
+      block_on: ["critical", "high"]
+      warn_on: ["medium"]
+      exit_code: 1
+    dast:
+      block_on: ["high", "medium"]
+      warn_on: ["low"]
+      exit_code: 1
+
+suppressions:
+  - id: "CVE-2024-0001"
+    scanner: "sca"
+    reason: "No patch available; mitigated by WAF rule. Reviewed with security lead."
+    expires: "2025-03-01"
+    approved_by: "security-team"
+
+  - id: "semgrep:python.lang.security.audit.exec-detected"
+    scanner: "sast"
+    reason: "Used in sandboxed admin CLI tool, not reachable from user input."
+    expires: "2025-06-01"
+    approved_by: "security-team"

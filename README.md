@@ -78,52 +78,47 @@ The repo includes three custom Semgrep rules in `security/semgrep-rules/` that g
 - **sql-string-concat**: Detects SQL queries built with string concatenation followed by `.execute()`, a pattern Semgrep's `auto` config sometimes misses when the concatenation and execution are on separate lines.
 - **flask-debug-enabled**: Catches `app.run(debug=True)`, which exposes the Werkzeug debugger and allows remote code execution.
 
-## Quality Gates
+## Security Policy Gates
 
-Each pipeline stage is configured to fail the build (and block PR merges) when findings meet severity thresholds:
+### Why Phased Enforcement?
 
-| Stage | Tool | Fail condition |
-|---|---|---|
-| Secrets | Gitleaks | Any secret detected |
-| SAST | Semgrep | Any ERROR-severity finding |
-| SCA | Snyk | Any HIGH or CRITICAL CVE |
-| Container | Trivy | Any HIGH or CRITICAL CVE |
-| DAST | ZAP | Rules configured as FAIL in `security/zap-config.yaml` |
+Turning all security gates to blocking on day one is the fastest way to kill developer trust in your security tooling. Teams learn to work around tools they see as obstacles, and once that habit forms, it's hard to reverse.
 
-Thresholds are intentionally strict for this demo. In a production pipeline you would tune these based on risk tolerance, potentially allowing WARN-level findings to pass while tracking them for remediation.
+This pipeline uses a phased rollout model, controlled by a single configuration file (`security-policy.yml`), that lets you start permissive and tighten as the tooling earns trust:
 
-## Findings Triage
+| Phase | Behavior | When to use |
+|-------|----------|-------------|
+| **Phase 1: Observe** | All scanners report findings but nothing blocks the pipeline | First 1-2 weeks. Establish a baseline, identify noisy rules, tune false positives |
+| **Phase 2: Gate Critical** | Critical and high severity block; medium is a warning | Weeks 3-6. Catch RCE, injection, leaked secrets without blocking on unvalidated noise |
+| **Phase 3: Enforce** | Medium and above block; low is informational | Week 7+. Only after tooling is tuned and teams have adopted remediation workflows |
 
-See [docs/findings-triage.md](docs/findings-triage.md) for a walkthrough of how to prioritize and remediate what this pipeline catches, using CVSS scoring, CWE classification, and business context.
+### How It Works
 
-## Running Locally
+1. `security-policy.yml` defines thresholds per scanner per phase
+2. Each pipeline stage runs its scanner with `continue-on-error: true`
+3. `scripts/evaluate_gate.py` reads the scan results, applies the active phase's thresholds, filters out suppressions, and exits with the appropriate code
+4. Changing enforcement is a one-line config change (`active_phase`), not a pipeline rewrite
 
-```bash
-# Run the app
-cd app
-pip install -r requirements.txt
-python app.py
+### Switching Phases
 
-# Run Semgrep locally
-semgrep --config auto --config ./security/semgrep-rules/ app/
-
-# Run Gitleaks locally
-gitleaks detect --source . --verbose
-
-# Build and scan the container
-docker build -t devsecops-demo ./app
-trivy image devsecops-demo
+```yaml
+# security-policy.yml
+active_phase: "phase_2"  # Change this to roll forward or back
 ```
 
-## Tools and Versions
+No workflow changes needed. The security team controls the policy file while developers own the pipeline. Separation of concerns.
 
-- [Semgrep](https://semgrep.dev/) (SAST)
-- [Snyk](https://snyk.io/) (SCA)
-- [Gitleaks](https://gitleaks.io/) (Secrets)
-- [Trivy](https://trivy.dev/) (Container scanning)
-- [OWASP ZAP](https://www.zaproxy.org/) (DAST)
+### Suppressions
 
-## License
+Suppressions require a justification, expiration date, and approver. Every suppression is a documented risk acceptance decision, not a way to silence findings permanently.
 
-MIT
+```yaml
+suppressions:
+  - id: "CVE-2024-0001"
+    scanner: "sca"
+    reason: "No patch available; mitigated by WAF rule."
+    expires: "2025-03-01"
+    approved_by: "security-team"
+```
 
+Expired suppressions automatically re-activate the finding.
