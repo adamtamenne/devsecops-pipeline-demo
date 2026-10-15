@@ -30,13 +30,19 @@ Push / PR
     |                        Stages 2 and 3 run in parallel after
     |                        secrets scanning passes.
     v
-[Stage 4: Container Scan]    Trivy
+[Stage 4: Container Scan]    Trivy + Syft + Cosign
     |                        Scans the built Docker image for OS
     |                        package CVEs, misconfigurations, and
-    |                        running as root.
+    |                        running as root. Generates an SBOM
+    |                        (CycloneDX) and signs the image with
+    |                        Cosign for supply chain integrity.
     |                        WHY HERE: the base image and installed
     |                        packages can introduce vulnerabilities
-    |                        even if the app code is clean.
+    |                        even if the app code is clean. The SBOM
+    |                        and signature provide SLSA Level 2
+    |                        provenance: proof of what's in the
+    |                        artifact and that it hasn't been
+    |                        tampered with.
     v
 [Stage 5: DAST]              OWASP ZAP
     |                        Runs the containerized app and tests
@@ -122,3 +128,19 @@ suppressions:
 ```
 
 Expired suppressions automatically re-activate the finding.
+
+
+## Supply Chain Security (SLSA Level 2)
+
+The container scan stage includes two supply chain security steps beyond vulnerability scanning:
+
+**SBOM Generation:** After building the Docker image, the pipeline generates a Software Bill of Materials (CycloneDX format) listing every component, version, and package URL in the image. When a zero-day drops, you search the SBOM instead of the codebase.
+
+```bash
+# Generate locally
+cyclonedx-py requirements -i requirements.txt --output-format JSON -o sbom.json
+```
+
+**Container Signing:** The built image is signed with Sigstore's Cosign using keyless signing tied to the GitHub Actions identity. The signature is recorded in Rekor's public transparency log. Before deploying, you verify the signature to confirm the image hasn't been tampered with since it left the pipeline.
+
+Together, these provide SLSA Level 2 provenance: a signed, verifiable record of what was built, when, from what source, and on what build system. This is the chain of custody that answers "can I trust that what I'm deploying is what went through my security pipeline?"
