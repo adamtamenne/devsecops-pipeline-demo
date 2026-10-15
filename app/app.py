@@ -7,14 +7,22 @@ a DevSecOps CI/CD pipeline with automated security scanning.
 DO NOT deploy this application in any real environment.
 
 Vulnerabilities embedded:
-  - A01: SQL Injection (raw query construction)
+  - A01: Broken Access Control (no auth check on /notes)
+  - A03: SQL Injection (raw query construction)
   - A03: Cross-Site Scripting / XSS (unescaped user input in response)
+  - A05: Security Misconfiguration (debug mode, missing headers, server leakage)
   - A07: Hardcoded credentials (API key in source)
+  - A07: Plaintext password storage and no rate limiting
+  - A08: Insecure deserialization (pickle.loads on user input)
   - A09: Insufficient logging (no audit trail on auth)
+  - A10: Server-Side Request Forgery (user-controlled URL fetch)
 """
 
 import os
 import sqlite3
+import pickle
+import base64
+import requests as http_requests
 from flask import Flask, request, jsonify, g, render_template_string
 
 app = Flask(__name__)
@@ -79,7 +87,7 @@ def index():
     return jsonify({
         "app": "DevSecOps Demo",
         "version": "1.0.0",
-        "endpoints": ["/login", "/search", "/profile", "/notes", "/health"],
+        "endpoints": ["/login", "/search", "/profile", "/notes", "/load", "/fetch", "/health"],
     })
 
 
@@ -88,7 +96,7 @@ def health():
     return jsonify({"status": "healthy"})
 
 
-# --- A01:2021 Broken Access Control / SQL Injection ---
+# --- A03:2021 Injection / SQL Injection ---
 # Raw string formatting in SQL query: SAST should catch this
 @app.route("/search")
 def search():
@@ -143,6 +151,39 @@ def get_notes(user_id):
         "SELECT title, content FROM notes WHERE user_id = ?", (user_id,)
     ).fetchall()
     return jsonify({"notes": [dict(n) for n in notes]})
+
+
+# --- A08:2021 Software and Data Integrity Failures ---
+# Insecure deserialization: pickle.loads on untrusted user input
+# An attacker can craft a pickle payload that executes arbitrary code
+@app.route("/load", methods=["POST"])
+def load_data():
+    data = request.get_data()
+    try:
+        decoded = base64.b64decode(data)
+        obj = pickle.loads(decoded)  # VULNERABLE: RCE via crafted pickle
+        return jsonify({"loaded": str(obj)})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+
+# --- A10:2021 Server-Side Request Forgery (SSRF) ---
+# Server makes HTTP requests to user-controlled URLs
+# Attacker can reach internal services, cloud metadata, private networks
+@app.route("/fetch")
+def fetch_url():
+    url = request.args.get("url", "")
+    if not url:
+        return jsonify({"error": "url parameter required"}), 400
+    try:
+        resp = http_requests.get(url, timeout=5)  # VULNERABLE: no URL validation
+        return jsonify({
+            "status": resp.status_code,
+            "length": len(resp.text),
+            "body": resp.text[:500]
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 if __name__ == "__main__":

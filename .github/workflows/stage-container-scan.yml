@@ -22,6 +22,7 @@ on:
 permissions:
   contents: read
   security-events: write
+  id-token: write
 
 jobs:
   trivy:
@@ -48,3 +49,23 @@ jobs:
         if: always()
         with:
           sarif_file: trivy-results.sarif
+
+# --- Supply Chain Security (SLSA Level 2) ---
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ inputs.image-name }}:${{ github.sha }}
+          format: cyclonedx-json
+          output-file: sbom.json
+
+      - name: Upload SBOM as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom.json
+
+      - name: Sign container image
+        uses: sigstore/cosign-installer@v3
+      - name: Run Cosign
+        run: cosign sign --yes ${{ inputs.image-name }}:${{ github.sha }}
