@@ -203,6 +203,100 @@ app.run(debug=False)
 
 ---
 
+## Finding 6: Hardcoded Credentials and Plaintext Password Storage (CWE-798, CWE-256, OWASP A07)
+
+**Endpoint:** `/login`
+
+**Request with hardcoded credentials found in source code:**
+
+```
+POST /login HTTP/1.1
+Host: 127.0.0.1:5001
+Content-Type: application/json
+
+{"username":"admin","password":"admin123"}
+```
+
+**Response:**
+
+```json
+{"message":"Login successful","user_id":1}
+```
+
+**Confirmed.** The credentials `admin` / `admin123` are hardcoded in the application source code in plaintext. The login endpoint performs a direct plaintext comparison (`WHERE username = ? AND password = ?`) instead of comparing against a hashed value. If the database is compromised, every password is immediately usable without cracking.
+
+![Successful Login with Hardcoded Credentials](images/burp-login-success.png)
+
+**Remediation:** Remove hardcoded credentials, hash passwords with bcrypt, and load secrets from environment variables.
+
+```python
+# Vulnerable: hardcoded credentials, plaintext comparison
+DATABASE_PASSWORD = "SuperSecret123!"
+cursor.execute("SELECT * FROM users WHERE username = ? AND password = ?",
+    (username, password))
+
+# Fixed: hash on registration, verify on login
+from werkzeug.security import generate_password_hash, check_password_hash
+import os
+
+DATABASE_PASSWORD = os.environ.get("DATABASE_PASSWORD")
+
+# Registration
+hashed = generate_password_hash(password)
+cursor.execute("INSERT INTO users (username, password) VALUES (?, ?)",
+    (username, hashed))
+
+# Login
+user = cursor.execute("SELECT * FROM users WHERE username = ?", (username,))
+if user and check_password_hash(user.password, password):
+    return "Login successful"
+```
+
+---
+
+## Finding 7: No Rate Limiting on Authentication (CWE-307, OWASP A07)
+
+**Endpoint:** `/login`
+
+**Test:** Sent 20+ consecutive failed login attempts with incorrect passwords. Every request returned the same response with no delay, lockout, or blocking.
+
+**Request:**
+
+```
+POST /login HTTP/1.1
+Host: 127.0.0.1:5001
+Content-Type: application/json
+
+{"username":"admin","password":"wrongpassword"}
+```
+
+**Response (identical on every attempt):**
+
+```json
+{"message":"Invalid credentials"}
+```
+
+**Confirmed.** The login endpoint has no rate limiting, no account lockout, and no progressive delay. An attacker can perform unlimited brute force attempts. The HTTP History screenshot below shows a wall of POST /login requests, all returning 401 with no defensive response from the server.
+
+![No Rate Limiting on Login](images/burp-no-rate-limit.png)
+
+**Remediation:** Add rate limiting and account lockout.
+
+```python
+from flask_limiter import Limiter
+
+limiter = Limiter(app, default_limits=["200 per day"])
+
+@app.route("/login", methods=["POST"])
+@limiter.limit("5 per minute")
+def login():
+    # After 5 failed attempts in 60 seconds, return 429 Too Many Requests
+    # Also consider: progressive delays, account lockout after N failures,
+    # and logging failed attempts for security monitoring
+```
+
+---
+
 ## Summary
 
 | # | Finding | OWASP | CWE | Severity | Validated |
@@ -212,6 +306,8 @@ app.run(debug=False)
 | 3 | Broken Access Control | A01:2021 | CWE-862 | High | Accessed other user's data without auth |
 | 4 | Missing Security Headers | A05:2021 | CWE-693 | Medium | Zero security headers in any response |
 | 5 | Server Info Leakage | A05:2021 | CWE-200 | Low | Framework and version exposed in every response |
+| 6 | Hardcoded Credentials | A07:2021 | CWE-798 | Critical | Source code credentials accepted by login |
+| 7 | No Rate Limiting | A07:2021 | CWE-307 | High | 20+ failed attempts with no lockout |
 
 ## Why Manual Validation Matters
 
